@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>教務手帳 for iPad (共有・教科別管理)</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body{font-family:system-ui,sans-serif}button:disabled{opacity:.45;cursor:not-allowed}</style></head>
+<body class="bg-gray-50 text-gray-800 min-h-screen flex flex-col">
+<header class="bg-indigo-700 text-white p-4 sticky top-0 z-20"><div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+<h1 onclick="goHome()" class="font-bold text-xl cursor-pointer hover:opacity-90">📚 教務手帳 for iPad（共有版）</h1><div class="flex flex-wrap items-center gap-2">
+<span id="status" class="text-xs bg-yellow-400 text-black rounded px-2 py-1">未ログイン</span><span id="email" class="text-xs"></span>
+<button id="login" onclick="login()" class="bg-white text-indigo-800 rounded px-3 py-2 text-sm">Googleでログイン</button><button id="logout" onclick="logout()" class="hidden bg-indigo-900 rounded px-3 py-2 text-sm">ログアウト</button>
+<div id="yearBox" class="hidden flex flex-wrap gap-1 items-center bg-indigo-900 rounded p-1">
+<select id="year" onchange="changeYear(this.value)" class="bg-indigo-950 rounded p-1 text-sm text-white"></select>
+<button onclick="addYear()" class="bg-indigo-600 rounded px-2 text-sm">＋年度</button>
+<button onclick="deleteYear()" class="bg-red-600 rounded px-2 text-sm">削除</button>
+<button onclick="exportJSON()" class="bg-emerald-600 text-white rounded px-2 text-sm ml-1" title="全データをJSON保存">📥 バックアップ</button>
+<label class="bg-amber-600 text-white rounded px-2 text-sm cursor-pointer" title="JSONから全データを復元">
+  📤 復元<input type="file" accept=".json" class="hidden" onchange="importJSON(this)">
+</label>
+</div>
+</div></div></header>
+<main id="main" class="hidden max-w-7xl w-full mx-auto p-4 flex-1 flex-col gap-4">
+<div id="readonly" class="hidden bg-amber-100 border border-amber-300 rounded p-3 text-sm">過去年度は閲覧専用です。CSV出力のみ利用できます。</div>
+
+<!-- コントロールバー -->
+<section class="bg-white border rounded-xl p-4 flex flex-wrap justify-between gap-4"><div class="flex flex-wrap items-end gap-3">
+<label class="text-xs">クラス<select id="class" onchange="changeClass(this.value)" class="block border rounded p-2 text-sm"><option value="">（クラスを選択）</option></select></label>
+<label class="text-xs">科目・教科<select id="subjectSelect" onchange="changeSubject(this.value)" class="block border rounded p-2 text-sm"><option value="">（科目を選択）</option></select></label>
+<button id="btnClassModal" data-edit onclick="openClass()" class="border rounded p-2 text-sm hidden">クラス・科目設定</button>
+<button id="btnStudentModal" data-edit onclick="openStudents()" class="border rounded p-2 text-sm hidden">生徒編集・Excel貼付</button></div>
+<div id="actionControls" class="flex flex-wrap items-end gap-2 hidden">
+<label class="text-xs">対象日付
+    <div class="flex items-center gap-1 mt-1">
+        <input id="date" type="text" placeholder="例: mmdd または mm-dd" class="border rounded p-2 bg-white text-sm w-40 text-center">
+        <button type="button" onclick="setTodayDate()" class="bg-gray-100 border rounded px-2.5 py-2 text-xs hover:bg-gray-200">今日</button>
+    </div>
+</label>
+<button data-edit onclick="addSelected()" class="bg-indigo-600 text-white rounded p-2 text-sm">選択生徒に日付追加</button>
+<button data-edit onclick="undo()" class="bg-amber-500 text-white rounded p-2 text-sm">↩ 戻る</button>
+<button onclick="csv()" class="bg-emerald-600 text-white rounded p-2 text-sm">CSV出力</button>
+</div></section>
+
+<!-- クラス・科目未選択時の案内エリア -->
+<div id="noClassSelected" class="bg-white border rounded-xl p-12 text-center flex flex-col items-center justify-center gap-3">
+<div class="text-4xl">📂</div>
+<h2 class="font-bold text-lg text-gray-700">クラスと科目を選択してください</h2>
+<p class="text-sm text-gray-500">上部のセレクトボックスからクラス・科目を選んでください。新しいクラスや科目の追加も可能です。</p>
+<button data-edit onclick="newClass()" class="mt-2 bg-indigo-600 text-white rounded px-4 py-2 text-sm font-medium">＋ 新しいクラスを追加</button>
+</div>
+
+<!-- クラス情報・テーブルエリア（初期は非表示） -->
+<div id="classContentArea" class="hidden flex flex-col gap-4 flex-1">
+<section class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 flex flex-wrap justify-between items-center gap-2">
+  <div>
+    <h2 id="className" class="font-bold text-lg">—</h2>
+    <p class="text-sm">科目: <span id="subjectNameDisplay" class="font-semibold">—</span> / 担当: <span id="teacherNameDisplay" class="font-semibold">—</span> / 単位数: <span id="units">—</span>単位</p>
+  </div>
+  <div id="unitLimitsBadge" class="text-xs bg-white border border-indigo-200 rounded-lg p-2 flex gap-3 text-gray-600">
+    <!-- 単位数に応じた上限値を動的表示 -->
+  </div>
+</section>
+<section class="bg-white border rounded-xl overflow-x-auto flex-1"><table class="w-full text-sm"><thead class="bg-gray-100"><tr><th class="p-3"><input type="checkbox" id="all" onchange="selectAll(this)"></th><th class="p-3">番号</th><th class="p-3 text-left">氏名</th><th class="p-3">欠課回数</th><th class="p-3 text-left">欠課日（クリックで削除）</th><th class="p-3">操作</th></tr></thead><tbody id="rows"></tbody></table></section>
+</div>
+</main>
+<div id="loginMessage" class="m-auto p-8 text-center"><div class="text-4xl">🔐</div><h2 class="font-bold text-xl my-2">Googleアカウントでログインしてください</h2><p class="text-sm text-gray-600">@g.kagawa-edu.jp の確認済みアカウントを使用してください。</p></div>
+<footer class="text-center text-xs text-gray-500 bg-white border-t p-3">教務手帳 for iPad（共有版）</footer>
+
+<!-- 各種モーダル -->
+<div id="classModal" class="hidden fixed inset-0 bg-black/50 z-30 items-center justify-center p-4"><div class="bg-white rounded-xl p-5 w-full max-w-lg">
+<h3 class="font-bold mb-3">クラス・科目設定</h3>
+<label class="block text-sm mb-2">クラス名<input id="cname" class="border rounded p-2 w-full" placeholder="例: 1年A組"></label>
+<label class="block text-sm mb-2">科目名<input id="csubject" class="border rounded p-2 w-full" placeholder="例: 英語コミュニケーションI"></label>
+<label class="block text-sm mb-2">担当教員名<input id="cteacher" class="border rounded p-2 w-full" placeholder="例: B先生"></label>
+<label class="block text-sm mb-3">単位数<input id="cunits" type="number" min="1" max="10" class="border rounded p-2 w-full"></label>
+<div class="flex justify-between items-center"><button onclick="newSubject()" class="border rounded p-2 text-sm bg-indigo-50 text-indigo-700">＋このクラスに科目追加</button><button onclick="removeClass()" class="border border-red-300 text-red-600 rounded p-2 text-sm">科目・クラス削除</button></div>
+<div class="flex justify-end gap-2 mt-4"><button onclick="hide('classModal')" class="bg-gray-100 rounded p-2 text-sm">キャンセル</button><button onclick="saveClass()" class="bg-indigo-600 text-white rounded p-2 text-sm">保存</button></div></div></div>
+
+<div id="studentModal" class="hidden fixed inset-0 bg-black/50 z-30 items-center justify-center p-4">
+    <div class="bg-white rounded-xl p-5 w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div class="flex flex-wrap justify-between items-center mb-2 gap-2">
+            <h3 class="font-bold">生徒編集（この科目の名簿）</h3>
+            <div class="flex gap-2">
+                <button onclick="downloadTemplate()" class="bg-gray-50 border text-gray-700 rounded px-2.5 py-1 text-xs font-medium hover:bg-gray-100 transition">📥 テンプレートDL</button>
+                <label class="bg-emerald-50 border border-emerald-300 text-emerald-700 rounded px-2.5 py-1 text-xs font-medium hover:bg-emerald-100 transition cursor-pointer">
+                    📂 CSVを読み込む<input type="file" id="csvFile" accept=".csv" class="hidden" onchange="loadCSVFile(this)">
+                </label>
+            </div>
+        </div>
+        <p class="text-xs text-gray-500 mb-2">Excelから出席番号と氏名の2列をコピーして貼り付けるか、CSVファイルを読み込んでください。</p>
+        <textarea id="paste" rows="3" class="border rounded p-2 text-sm" placeholder="1&#9;青木 一郎&#10;2&#9;井上 花子"></textarea>
+        <div id="studentRows" class="overflow-y-auto flex-1 space-y-2 border-t border-b py-2 my-2 pr-1"></div>
+        <button onclick="addStudent()" class="self-start border rounded p-2 my-1 text-sm bg-gray-50 hover:bg-gray-100">＋生徒追加</button>
+        <div class="flex justify-end gap-2 mt-2">
+            <button onclick="hide('studentModal')" class="bg-gray-100 rounded p-2 text-sm">キャンセル</button>
+            <button onclick="saveStudents()" class="bg-indigo-600 text-white rounded p-2 text-sm">保存する</button>
+        </div>
+    </div>
+</div>
+
+<div id="confirmModal" class="hidden fixed inset-0 bg-black/50 z-40 items-center justify-center p-4"><div class="bg-white rounded-xl p-5 w-full max-w-md"><h3 class="font-bold text-red-600 mb-2">削除確認</h3><p id="confirmText" class="text-sm mb-4"></p><div class="flex justify-end gap-2"><button onclick="hide('confirmModal')" class="bg-gray-100 rounded p-2">キャンセル</button><button onclick="confirmDelete()" class="bg-red-600 text-white rounded p-2">削除する</button></div></div></div>
+
+<script type="module">
+import{initializeApp}from"https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import{getFirestore,doc,getDoc,setDoc,onSnapshot}from"https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+import{getAuth,GoogleAuthProvider,signInWithPopup,signInWithRedirect,getRedirectResult,onAuthStateChanged,signOut}from"https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+
+const config={apiKey:"AIzaSyD-KJ1Yx5Pim-HIq5Vt0xvAuQbltZfBTKg",authDomain:"kyoumu-attendance.firebaseapp.com",projectId:"kyoumu-attendance",storageBucket:"kyoumu-attendance.firebasestorage.app",messagingSenderId:"35065093867",appId:"1:35065093867:web:4dbb92e25eedeb3da828ae"};
+const DOMAIN="g.kagawa-edu.jp",fb=initializeApp(config),db=getFirestore(fb),auth=getAuth(fb),provider=new GoogleAuthProvider();
+provider.setCustomParameters({hd:DOMAIN,prompt:"select_account"});
+
+let user=null,data=null,year="",classId="",subjectId="",stop=null,history=[],loaded=false,pendingDelete=null,saveTimer=null,remoteApplying=false;
+
+const $=id=>document.getElementById(id),copy=x=>JSON.parse(JSON.stringify(x));
+const localToday=()=>{let d=new Date();d=new Date(d.getTime()-d.getTimezoneOffset()*60000);return d.toISOString().slice(0,10)};
+
+const formatDateDisplay = d => {
+    if (!d || d.length < 10) return d;
+    let parts = d.split('-');
+    if (parts.length === 3) return `${parts[1]}/${parts[2]}`;
+    return d.slice(5);
+};
+
+function getAbsenceLimits(units) {
+    const totalHours = (units || 2) * 35;
+    const limitMax = Math.ceil(totalHours / 3);
+    const limitWarning = Math.floor(limitMax * 0.7);
+    const limitCaution = Math.floor(limitMax * 0.4);
+    return { totalHours, limitMax, limitWarning, limitCaution };
+}
+
+function status(t){$("status").textContent=t}
+function defaultData(){return{schemaVersion:3,years:{"2026年度":{classes:{}}}}}
+
+// データ構造の正規化（クラスの中に複数のsubjectsを持つ形に移行）
+function normalize(d){
+    if(!d||typeof d!=="object")return defaultData();
+    if(!d.years){let ys={};for(let[k,v]of Object.entries(d))if(v?.classes)ys[k]=v;d={years:ys}}
+    if(!Object.keys(d.years||{}).length)return defaultData();
+    for(let yd of Object.values(d.years)){
+        yd.classes??={};
+        for(let[id,c]of Object.entries(yd.classes)){
+            c.name??=id;
+            c.subjects??={};
+            // 旧データ（直接studentsを持っていた場合）の移行救済
+            if(Array.isArray(c.students)){
+                let oldSubId="subject_default";
+                c.subjects[oldSubId] = {
+                    subjectName: c.subject || "一般科目",
+                    teacher: c.teacher || "担当未設定",
+                    units: Number(c.units) || 2,
+                    students: c.students
+                };
+                delete c.students;
+                delete c.subject;
+                delete c.units;
+            }
+            if(!Object.keys(c.subjects).length){
+                c.subjects["subject_default"] = {subjectName: "科目未設定", teacher: "担当未設定", units: 2, students: []};
+            }
+            for(let[subId, sub] of Object.entries(c.subjects)){
+                sub.subjectName ??= "科目名未設定";
+                sub.teacher ??= "担当未設定";
+                sub.units = Number(sub.units) || 2;
+                sub.students = (sub.students||[]).map((s,i)=>({id:Number(s.id)||i+1,number:Number(s.number??s.no)||i+1,name:String(s.name||""),absences:s.absences||s.dates||[]}));
+            }
+        }
+    }
+    return d;
+}
+
+function yrNum(s){return Number((String(s).match(/\d{4}/)||[])[0])||0}
+function latest(){return Object.keys(data.years).sort((a,b)=>yrNum(b)-yrNum(a)||b.localeCompare(a,"ja"))[0]}
+function yd(){return data?.years?.[year]}
+function cls(){return yd()?.classes?.[classId]}
+function sub(){return cls()?.subjects?.[subjectId]}
+function readonly(){return !!data&&year!==latest()}
+function editable(){if(readonly()){alert("過去年度は閲覧専用です。現年度を選択してください。");return false}return true}
+
+// ★全員が同じデータを共有するための共通Firestoreパス
+function ref(){return doc(db,"sharedData","attendanceMaster")}
+
+function localSave(){localStorage.setItem("attendance_cache_shared",JSON.stringify(data))}
+function queueSave(){if(!loaded||remoteApplying||!editable())return;localSave();status("保存待機中");clearTimeout(saveTimer);saveTimer=setTimeout(save,500)}
+async function save(){if(!loaded||remoteApplying)return;try{await setDoc(ref(),{appData:data,updatedAt:new Date().toISOString()});status("同期完了")}catch(e){console.error(e);status("保存失敗");alert("クラウド保存に失敗しました。セキュリティルールを確認してください。")}}
+function hist(){history.push(copy(data));if(history.length>20)history.shift()}
+
+window.goHome = () => {
+    classId = "";
+    subjectId = "";
+    render();
+};
+
+window.setTodayDate = () => {
+    if(readonly()) return;
+    $("date").value = localToday();
+};
+
+function parseDateInput(str) {
+    str = str.trim();
+    if (!str) return "";
+    let currentYear = yrNum(year) || new Date().getFullYear();
+    if (/^\d{4}$/.test(str)) return `${currentYear}-${str.slice(0, 2)}-${str.slice(2, 4)}`;
+    if (/^\d{1,2}[-\/\.]\d{1,2}$/.test(str)) {
+        let parts = str.split(/[-\/\.]/);
+        return `${currentYear}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`;
+    }
+    if (/^\d{4}[-\/\.]\d{1,2}[-\/\.]\d{1,2}$/.test(str)) return str.replace(/[\/\.]/g, '-');
+    return str;
+}
+
+function render(){
+    let ys=$("year");ys.innerHTML="";
+    Object.keys(data.years).sort((a,b)=>yrNum(b)-yrNum(a)).forEach(y=>{let o=new Option(y,y);o.selected=y===year;ys.add(o)});
+    
+    // クラスセレクト
+    let cs=$("class");
+    cs.innerHTML='<option value="">（クラスを選択）</option>';
+    let classesObj=yd()?.classes||{};
+    Object.keys(classesObj).forEach(id=>{
+        let c=classesObj[id];
+        let o=new Option(c.name, id);
+        if(id===classId)o.selected=true;
+        cs.add(o);
+    });
+
+    // 科目セレクト
+    let ss=$("subjectSelect");
+    ss.innerHTML='<option value="">（科目を選択）</option>';
+    if(classId && classesObj[classId]){
+        let subs = classesObj[classId].subjects || {};
+        Object.keys(subs).forEach(sId=>{
+            let s = subs[sId];
+            let o=new Option(`${s.subjectName} (${s.teacher})`, sId);
+            if(sId===subjectId)o.selected=true;
+            ss.add(o);
+        });
+    }
+
+    let hasTarget = classId && subjectId && classesObj[classId]?.subjects?.[subjectId];
+
+    if(!hasTarget){
+        $("noClassSelected").classList.remove("hidden");
+        $("noClassSelected").classList.add("flex");
+        $("classContentArea").classList.add("hidden");
+        $("btnClassModal").classList.add("hidden");
+        $("btnStudentModal").classList.add("hidden");
+        $("actionControls").classList.add("hidden");
+    } else {
+        $("noClassSelected").classList.add("hidden");
+        $("noClassSelected").classList.remove("flex");
+        $("classContentArea").classList.remove("hidden");
+        $("btnClassModal").classList.remove("hidden");
+        $("btnStudentModal").classList.remove("hidden");
+        $("actionControls").classList.remove("hidden");
+        $("actionControls").classList.add("flex");
+
+        let c = cls();
+        let sObj = sub();
+        $("className").textContent = c.name;
+        $("subjectNameDisplay").textContent = sObj.subjectName;
+        $("teacherNameDisplay").textContent = sObj.teacher;
+        let units = sObj.units || 2;
+        $("units").textContent = units;
+
+        const limits = getAbsenceLimits(units);
+        $("unitLimitsBadge").innerHTML = `
+            <span>注意: <b>${limits.limitCaution}</b>回〜</span>
+            <span>警告: <b class="text-amber-600">${limits.limitWarning}</b>回〜</span>
+            <span>単位不可: <b class="text-red-600">${limits.limitMax}</b>回以上</span>
+        `;
+
+        $("rows").innerHTML="";
+
+        [...sObj.students].sort((a,b)=>a.number-b.number).forEach(s=>{
+            let absencesCount = s.absences.length;
+            let tr=document.createElement("tr");
+            
+            if(absencesCount >= limits.limitMax){
+                tr.className="border-t bg-red-200 hover:bg-red-300 font-bold text-red-950";
+            }else if(absencesCount >= limits.limitWarning){
+                tr.className="border-t bg-red-50 hover:bg-red-100";
+            }else if(absencesCount >= limits.limitCaution){
+                tr.className="border-t bg-amber-50 hover:bg-amber-100";
+            }else{
+                tr.className="border-t hover:bg-gray-50";
+            }
+
+            let td=document.createElement("td");td.className="p-3 text-center";
+            let cb=document.createElement("input");cb.type="checkbox";cb.className="student-check";cb.dataset.id=s.id;cb.disabled=readonly();td.append(cb);tr.append(td);
+            
+            let x=document.createElement("td");x.className="p-3 text-center";x.textContent=s.number;tr.append(x);
+            let n=document.createElement("td");n.className="p-3 font-semibold";n.textContent=s.name;tr.append(n);
+            
+            let count=document.createElement("td");
+            count.className="p-3 text-center font-bold";
+            count.textContent = absencesCount;
+            if(absencesCount >= limits.limitMax) count.textContent += " ⚠️";
+            tr.append(count);
+            
+            let dates=document.createElement("td");dates.className="p-3";
+            s.absences.forEach((d,i)=>{
+                let b=document.createElement("button");
+                b.className="bg-gray-100 border rounded px-2 py-1 m-0.5 text-xs hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition";
+                b.textContent=formatDateDisplay(d)+" ×";
+                b.disabled=readonly();
+                b.onclick=()=>removeDateWithConfirm(s.id, s.name, d, i);
+                dates.append(b);
+            });
+            if(!s.absences.length)dates.textContent="欠課なし";
+            tr.append(dates);
+
+            let op=document.createElement("td");op.className="p-3 text-center whitespace-nowrap flex items-center justify-center gap-1.5";
+            let b1=document.createElement("button");b1.textContent="本日の欠課を追加";b1.className="bg-indigo-50 border text-indigo-700 rounded px-2 py-1 text-xs";b1.disabled=readonly();b1.onclick=()=>addToday(s.id);
+            
+            let b2=document.createElement("input");
+            b2.type="text";
+            b2.placeholder="mmdd";
+            b2.className="border rounded p-1 text-xs bg-white w-16 text-center";
+            b2.disabled=readonly();
+            b2.title="過去の欠課日を追加（例: mmdd または mm-dd）";
+            b2.onchange=(e)=>{
+                let parsed = parseDateInput(e.target.value);
+                if(parsed) addDateToStudent(s.id, parsed);
+                e.target.value = "";
+            };
+            op.append(b1,b2);tr.append(op);
+            $("rows").append(tr);
+        });
+    }
+
+    $("readonly").classList.toggle("hidden",!readonly());
+    document.querySelectorAll("[data-edit]").forEach(b=>b.disabled=readonly());
+    $("date").value = "";
+    $("date").disabled = readonly();
+    if($("all")){ $("all").disabled=readonly(); $("all").checked=false; }
+}
+
+window.login=async()=>{try{await signInWithPopup(auth,provider)}catch(e){if(["auth/popup-blocked","auth/operation-not-supported-in-this-environment"].includes(e.code))await signInWithRedirect(auth,provider);else alert("ログインできませんでした: "+e.message)}};
+window.logout=async()=>{if(stop)stop();await signOut(auth);location.reload()};
+
+async function session(u){
+    if(!u.emailVerified||!u.email?.toLowerCase().endsWith("@"+DOMAIN)){
+        alert("@g.kagawa-edu.jp の確認済みアカウントでログインしてください。");
+        await signOut(auth);
+        return;
+    }
+    user=u;
+    $("email").textContent=u.email;
+    $("login").classList.add("hidden");
+    $("logout").classList.remove("hidden");
+    $("loginMessage").classList.add("hidden");
+    $("main").classList.remove("hidden");
+    $("main").classList.add("flex");
+    $("yearBox").classList.remove("hidden");
+    status("読み込み中");
+    loaded=false;
+    if(stop)stop();
+    
+    try{
+        let snap=await getDoc(ref());
+        if(snap.exists()&&snap.data().appData){
+            data=normalize(snap.data().appData);
+        }else{
+            data=defaultData();
+            loaded=true;
+            await setDoc(ref(),{appData:data,updatedAt:new Date().toISOString()});
+        }
+        year=latest();
+        classId="";
+        subjectId="";
+        loaded=true;
+        history=[];
+        localSave();
+        render();
+        status("同期完了");
+        
+        // リアルタイム同期（他の教員が入力した内容が即座に反映される）
+        stop=onSnapshot(ref(),s=>{
+            if(!s.exists()||!s.data().appData)return;
+            remoteApplying=true;
+            data=normalize(s.data().appData);
+            if(!data.years[year])year=latest();
+            if(classId&&!yd()?.classes?.[classId])classId="";
+            if(classId&&subjectId&&!yd()?.classes?.[classId]?.subjects?.[subjectId])subjectId="";
+            render();
+            localSave();
+            remoteApplying=false;
+            status("同期完了");
+        },e=>{console.error(e);status("同期エラー")});
+    }catch(e){
+        console.error(e);
+        status("読込失敗");
+        alert("データを読み込めません。Firebaseの設定を確認してください。");
+    }
+}
+
+onAuthStateChanged(auth,u=>{if(u)session(u);else{$("login").classList.remove("hidden");$("logout").classList.add("hidden");$("main").classList.add("hidden");$("loginMessage").classList.remove("hidden");$("email").textContent="";status("未ログイン")}});
+getRedirectResult(auth).catch(console.error);
+
+window.changeYear=y=>{if(data.years[y]){year=y;classId="";subjectId="";render()}};
+window.changeClass=id=>{classId=id;subjectId="";let c=yd()?.classes?.[id];if(c&&Object.keys(c.subjects).length===1)subjectId=Object.keys(c.subjects)[0];render()};
+window.changeSubject=id=>{subjectId=id;render()};
+
+window.addYear=()=>{
+    if(!editable())return;
+    let y=prompt("新年度を入力してください:",(yrNum(latest())+1)+"年度");
+    if(!y?.trim())return;
+    y=y.trim();
+    if(data.years[y])return alert("すでに存在する年度です。");
+    let source=yd(),classes={};
+    if(source)Object.entries(source.classes).forEach(([id,c])=>{
+        let newSubs={};
+        Object.entries(c.subjects||{}).forEach(([sId,sub])=>{
+            newSubs["sub_"+crypto.randomUUID()]={subjectName:sub.subjectName,teacher:sub.teacher,units:sub.units,students:[]};
+        });
+        classes["class_"+crypto.randomUUID()]={name:c.name,subjects:newSubs};
+    });
+    hist();
+    data.years[y]={classes};
+    year=y;classId="";subjectId="";
+    render();queueSave();
+    alert("クラス・科目構造を引き継ぎ、生徒名簿と欠課記録をリセットして新年度を作成しました。");
+};
+
+window.deleteYear=()=>{
+    if(Object.keys(data.years).length<2)return alert("最後の年度は削除できません。");
+    pendingDelete={type:"year",id:year,name:year};
+    $("confirmText").textContent=`年度「${year}」の全データを削除します。元に戻せません。よろしいですか？`;
+    show("confirmModal");
+};
+
+window.selectAll=m=>document.querySelectorAll(".student-check").forEach(c=>c.checked=m.checked);
+
+window.addSelected=()=>{
+    if(!editable())return;
+    let rawVal=$("date").value;
+    let d=parseDateInput(rawVal);
+    if(!d||!/^\d{4}-\d{2}-\d{2}$/.test(d)){
+        alert("日付の形式が正しくありません。「mmdd」または「mm-dd」のように入力するか、「今日」ボタンを押してください。");
+        return;
+    }
+    let selected=[...document.querySelectorAll(".student-check:checked")];
+    if(!selected.length)return alert("生徒を選択してください。");
+    hist();
+    selected.forEach(cb=>{let s=sub().students.find(x=>x.id===Number(cb.dataset.id));if(s){s.absences.push(d);s.absences.sort()}});
+    render();queueSave();
+};
+
+window.addToday=id=>{if(!editable())return;let s=sub().students.find(x=>x.id===id);if(!s)return;hist();s.absences.push(localToday());s.absences.sort();render();queueSave()};
+window.addDateToStudent=(id,d)=>{if(!editable())return;let s=sub().students.find(x=>x.id===id);if(!s)return;hist();s.absences.push(d);s.absences.sort();render();queueSave()};
+
+window.removeDateWithConfirm=(id,studentName,dateStr,i)=>{
+    if(!editable())return;
+    if(confirm(`${studentName} の ${formatDateDisplay(dateStr)} の欠課を削除しますか？`)){
+        let s=sub().students.find(x=>x.id===id);
+        if(!s)return;
+        hist();s.absences.splice(i,1);render();queueSave();
+    }
+};
+
+window.undo=()=>{if(!editable())return;if(!history.length)return alert("戻せる操作履歴がありません。");data=history.pop();render();queueSave()};
+
+window.csv=()=>{
+    let c=cls(),sObj=sub();
+    if(!c||!sObj)return;
+    let q=x=>'"'+String(x??"").replace(/"/g,'""')+'"';
+    let out="\uFEFF年度,"+q(year)+"\r\nクラス,"+q(c.name)+"\r\n科目,"+q(sObj.subjectName)+"\r\n担当教員,"+q(sObj.teacher)+"\r\n単位数,"+sObj.units+"\r\n\r\n出席番号,氏名,欠課回数,欠課日\r\n";
+    sObj.students.forEach(s=>out+=[q(s.number),q(s.name),s.absences.length,q(s.absences.map(d=>formatDateDisplay(d)).join(" "))].join(",")+"\r\n");
+    let a=document.createElement("a"),u=URL.createObjectURL(new Blob([out],{type:"text/csv;charset=utf-8"}));
+    a.href=u;a.download=`出欠記録_${year}_${c.name}_${sObj.subjectName}.csv`;a.click();URL.revokeObjectURL(u);
+};
+
+window.downloadTemplate=()=>{
+    let out="\uFEFF出席番号,氏名\r\n1,青木 一郎\r\n2,井上 花子\r\n3,佐藤 健太\r\n";
+    let a=document.createElement("a"),u=URL.createObjectURL(new Blob([out],{type:"text/csv;charset=utf-8"}));
+    a.href=u;a.download=`生徒名簿テンプレート.csv`;a.click();URL.revokeObjectURL(u);
+};
+
+window.exportJSON=()=>{
+    if(!data)return alert("データが存在しません。");
+    const jsonStr=JSON.stringify(data,null,2);
+    const blob=new Blob([jsonStr],{type:"application/json;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=`教務手帳_共有データバックアップ_${localToday()}.json`;a.click();
+    URL.revokeObjectURL(url);
+};
+
+window.importJSON=(input)=>{
+    const file=input.files[0];if(!file)return;
+    if(!confirm("共有されている全データが、読み込んだJSONファイルの内容で上書きされます。よろしいですか？")){input.value="";return;}
+    const reader=new FileReader();
+    reader.onload=(e)=>{
+        try{
+            const imported=JSON.parse(e.target.result);
+            if(!imported||typeof imported!=="object")throw new Error("無効なJSON");
+            hist();data=normalize(imported);year=latest();classId="";subjectId="";
+            render();queueSave();
+            alert("データを復元・上書き保存しました。");
+        }catch(err){
+            console.error(err);
+            alert("JSONファイルの読み込みに失敗しました。");
+        }
+        input.value="";
+    };
+    reader.readAsText(file,"UTF-8");
+};
+
+window.loadCSVFile=(input)=>{
+    let file=input.files[0];if(!file)return;
+    let reader=new FileReader();
+    reader.onload=(e)=>{
+        let text=e.target.result;
+        let lines=text.split(/\r?\n/);
+        let container=$("studentRows");
+        container.innerHTML="";
+        let start=0;
+        if(lines.length>0&&(lines[0].includes("番号")||lines[0].includes("氏名")||lines[0].includes("出席")))start=1;
+        let autoNum=1;
+        for(let i=start;i<lines.length;i++){
+            let line=lines[i].trim();
+            if(!line)continue;
+            let cols=line.split(",");
+            if(cols.length>=2){
+                let num=parseInt(cols[0].replace(/"/g,""))||autoNum++;
+                let name=cols[1].replace(/"/g,"").trim();
+                appendStudentRow(num,name);
+            }else if(cols.length===1){
+                let name=cols[0].replace(/"/g,"").trim();
+                if(name)appendStudentRow(autoNum++,name);
+            }
+        }
+        input.value="";
+    };
+    reader.readAsText(file,"UTF-8");
+};
+
+window.openClass=()=>{
+    if(!editable())return;
+    let c=cls(), sObj=sub();
+    if(!c||!sObj)return;
+    $("cname").value=c.name;
+    $("csubject").value=sObj.subjectName;
+    $("cteacher").value=sObj.teacher;
+    $("cunits").value=sObj.units;
+    show("classModal");
+};
+
+window.saveClass=()=>{
+    if(!editable())return;
+    let c=cls(), sObj=sub();
+    let n=$("cname").value.trim(), subjName=$("csubject").value.trim(), teacher=$("cteacher").value.trim(), u=Number($("cunits").value);
+    if(!n||!subjName||!teacher||!Number.isInteger(u)||u<1||u>10)return alert("クラス名・科目名・担当教員・単位数を正しく入力してください。");
+    hist();
+    c.name=n;
+    sObj.subjectName=subjName;
+    sObj.teacher=teacher;
+    sObj.units=u;
+    hide("classModal");render();queueSave();
+};
+
+window.newClass=()=>{
+    if(!editable())return;
+    let n=prompt("新しいクラス名 (例: 1年A組):");
+    if(!n?.trim())return;
+    n=n.trim();
+    if(Object.values(yd().classes).some(c=>c.name===n))return alert("同じクラス名が既に存在します。");
+    let subj=prompt("初期科目名 (例: 英語コミュニケーションI):","科目未設定");
+    if(!subj?.trim())return;
+    let teacher=prompt("担当教員名 (例: B先生):","担当未設定");
+    if(!teacher?.trim())return;
+    
+    hist();
+    let cId="class_"+crypto.randomUUID();
+    let sId="sub_"+crypto.randomUUID();
+    yd().classes[cId]={
+        name: n,
+        subjects: {
+            [sId]: { subjectName: subj.trim(), teacher: teacher.trim(), units: 2, students: [] }
+        }
+    };
+    classId=cId;
+    subjectId=sId;
+    hide("classModal");render();queueSave();
+};
+
+window.newSubject=()=>{
+    if(!editable()||!classId)return;
+    let subj=prompt("追加する科目名 (例: 数学I):");
+    if(!subj?.trim())return;
+    let teacher=prompt("担当教員名 (例: D先生):");
+    if(!teacher?.trim())return;
+    let units=parseInt(prompt("単位数 (1〜10):","2"))||2;
+
+    hist();
+    let sId="sub_"+crypto.randomUUID();
+    cls().subjects[sId]={ subjectName: subj.trim(), teacher: teacher.trim(), units: units, students: [] };
+    subjectId=sId;
+    hide("classModal");render();queueSave();
+};
+
+window.removeClass=()=>{
+    if(!editable())return;
+    let c=cls(), sObj=sub();
+    if(!c||!sObj)return;
+    let subCount=Object.keys(c.subjects).length;
+    if(subCount>1){
+        pendingDelete={type:"subject", id:subjectId, name:`${c.name} の ${sObj.subjectName}（${sObj.teacher}）`};
+        $("confirmText").textContent=`科目「${sObj.subjectName}（${sObj.teacher}）」のデータを削除します。よろしいですか？`;
+    }else{
+        pendingDelete={type:"class", id:classId, name:c.name};
+        $("confirmText").textContent=`クラス「${c.name}」および全科目のデータを削除します。よろしいですか？`;
+    }
+    show("confirmModal");
+};
+
+window.confirmDelete=()=>{
+    if(!pendingDelete)return;
+    hist();
+    if(pendingDelete.type==="subject"){
+        delete cls().subjects[pendingDelete.id];
+        subjectId="";
+    }else if(pendingDelete.type==="class"){
+        delete yd().classes[pendingDelete.id];
+        classId="";subjectId="";
+    }else if(pendingDelete.type==="year"){
+        delete data.years[pendingDelete.id];
+        year=latest();classId="";subjectId="";
+    }
+    hide("confirmModal");hide("classModal");
+    pendingDelete=null;render();queueSave();
+};
+
+window.openStudents=()=>{
+    if(!editable()||!classId||!subjectId)return;
+    $("paste").value="";
+    let container=$("studentRows");
+    container.innerHTML="";
+    sub().students.forEach(s=>appendStudentRow(s.number,s.name));
+    show("studentModal");
+};
+
+function appendStudentRow(num="",name=""){
+    let row=document.createElement("div");
+    row.style.cssText = "display: flex; flex-direction: row; align-items: center; gap: 8px; width: 100%; margin-bottom: 6px;";
+    let a=document.createElement("input");
+    a.type="number";a.min="1";a.value=num;a.placeholder="番号";
+    a.style.cssText = "width: 55px; flex-shrink: 0; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; font-size: 14px; text-align: center;";
+    let b=document.createElement("input");
+    b.type="text";b.value=name;b.placeholder="氏名";
+    b.style.cssText = "flex: 1; min-width: 0; border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; font-size: 14px;";
+    let x=document.createElement("button");
+    x.type="button";x.textContent="×";
+    x.style.cssText = "flex-shrink: 0; color: #dc2626; font-weight: bold; padding: 4px 10px; border-radius: 6px; background: none; border: none; cursor: pointer;";
+    x.onclick=()=>row.remove();
+    row.append(a,b,x);
+    $("studentRows").append(row);
+}
+window.addStudent=()=>appendStudentRow();
+
+window.saveStudents=()=>{
+    if(!editable()||!classId||!subjectId)return;
+    let pasteText=$("paste").value.trim();
+    if(pasteText){
+        pasteText.split(/\r?\n/).forEach((line,i)=>{
+            if(!line.trim())return;
+            let cols=line.split("\t");
+            if(cols.length>=2){
+                appendStudentRow(parseInt(cols[0])||(i+1),cols.slice(1).join(" ").trim());
+            }else if(cols.length===1){
+                let name=cols[0].trim();
+                if(name)appendStudentRow(i+1,name);
+            }
+        });
+        $("paste").value="";
+    }
+    let used=new Set(),arr=[];
+    for(let[i,r]of [...document.querySelectorAll("#studentRows > div")].entries()){
+        let inputs=r.querySelectorAll("input");
+        let n=Number(inputs[0].value)||(i+1),name=inputs[1].value.trim();
+        if(!name)continue;
+        if(used.has(n))return alert(`出席番号${n}が重複しています。`);
+        used.add(n);
+        let old=sub().students.find(s=>s.name===name);
+        arr.push({id:i+1,number:n,name,absences:old?[...old.absences]:[]});
+    }
+    hist();
+    sub().students=arr;
+    hide("studentModal");render();queueSave();
+};
+
+window.show=id=>{$(id).classList.remove("hidden");$(id).classList.add("flex")};
+window.hide=id=>{$(id).classList.add("hidden");$(id).classList.remove("flex")};
+</script></body></html>
